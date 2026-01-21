@@ -1,0 +1,9 @@
+.env
+scraped_images/
+scraped_videos/
+scraped_data/
+scrape_state.json
+scrape.log
+__pycache__/
+*.pyc
+.venv/
