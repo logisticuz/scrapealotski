@@ -41,6 +41,10 @@ and store them in a clean, searchable archive.
 - `SCRAPE_METADATA_ONLY`: Save metadata JSON but skip file downloads.
 - `LOG_TO_FILE`: Append logs to `LOG_PATH`.
 - `LOG_PATH`: Log file location when `LOG_TO_FILE=true`.
+- `LOG_ERRORS_TO_FILE`: Append error logs to `LOG_ERROR_PATH`.
+- `LOG_ERROR_PATH`: Error log file location.
+- `LOG_JSON`: Write JSONL metrics to `LOG_JSON_PATH`.
+- `LOG_JSON_PATH`: JSONL metrics file location.
 - `DOWNLOAD_RETRIES`: How many times to retry a failed download.
 - `DOWNLOAD_BACKOFF_SECONDS`: Base backoff for retries (seconds).
 - `DOWNLOAD_TIMEOUT_SECONDS`: Per-download timeout (seconds).

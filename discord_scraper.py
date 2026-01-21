@@ -3,6 +3,7 @@ import os
 import aiohttp
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from storage_handler import upload_file
 from config import (
@@ -14,6 +15,10 @@ from config import (
     IMAGE_EXTENSIONS,
     LOG_PATH,
     LOG_TO_FILE,
+    LOG_ERRORS_TO_FILE,
+    LOG_ERROR_PATH,
+    LOG_JSON,
+    LOG_JSON_PATH,
     SCRAPE_BACKFILL,
     SCRAPE_BACKFILL_AUTORUN,
     SCRAPE_BACKFILL_MAX_BATCHES,
@@ -49,6 +54,26 @@ def _log(message):
         return
     with open(LOG_PATH, "a", encoding="utf-8") as handle:
         handle.write(f"{line}\n")
+
+
+def _log_error(message):
+    _log(message)
+    if not LOG_ERRORS_TO_FILE:
+        return
+    with open(LOG_ERROR_PATH, "a", encoding="utf-8") as handle:
+        handle.write(f"{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+
+
+def _log_json(event, payload):
+    if not LOG_JSON:
+        return
+    record = {
+        "timestamp": datetime.now().astimezone().isoformat(),
+        "event": event,
+        "payload": payload,
+    }
+    with open(LOG_JSON_PATH, "a", encoding="utf-8") as handle:
+        handle.write(f"{json.dumps(record, ensure_ascii=False)}\n")
 
 
 async def _upload_file_async(local_path, cloud_path):
@@ -165,13 +190,13 @@ async def download_attachment(session, url, filename):
                     _log(f"⏳ Rate limited ({resp.status}), retrying in {wait_time}s: {filename}")
                     await asyncio.sleep(wait_time)
                     continue
-                _log(f"⚠️ Download failed ({resp.status}): {filename}")
+                _log_error(f"⚠️ Download failed ({resp.status}): {filename}")
                 if resp.status >= 500 and attempt < DOWNLOAD_RETRIES:
                     await asyncio.sleep(DOWNLOAD_BACKOFF_SECONDS * attempt)
                     continue
                 return False
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            _log(f"⚠️ Download error ({exc.__class__.__name__}): {filename}")
+            _log_error(f"⚠️ Download error ({exc.__class__.__name__}): {filename}")
             if attempt < DOWNLOAD_RETRIES:
                 await asyncio.sleep(DOWNLOAD_BACKOFF_SECONDS * attempt)
                 continue
@@ -185,6 +210,10 @@ async def scrape_messages(channel_id, limit=None, after=None, before=None):
         raise RuntimeError(f"Channel not found for ID {channel_id}.")
     messages = []
     message_count = 0
+    message_error_count = 0
+    attachment_count = 0
+    attachment_success = 0
+    attachment_fail = 0
     oldest_id = None
 
     timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT_SECONDS)
@@ -210,9 +239,11 @@ async def scrape_messages(channel_id, limit=None, after=None, before=None):
                         filename = f"scraped_videos/{attachment.id}_{attachment.filename}"
                     else:
                         continue
+                    attachment_count += 1
                     success = await download_attachment(session, attachment.url, filename)
                     if success:
                         msg_data["attachments"].append(filename)
+                        attachment_success += 1
                     else:
                         msg_data["errors"].append(
                             {
@@ -220,12 +251,14 @@ async def scrape_messages(channel_id, limit=None, after=None, before=None):
                                 "url": attachment.url,
                             }
                         )
+                        attachment_fail += 1
 
                 messages.append(msg_data)
                 message_count += 1
                 oldest_id = message.id
             except Exception as exc:
-                _log(f"⚠️ Message skipped due to error: {exc}")
+                _log_error(f"⚠️ Message skipped due to error: {exc}")
+                message_error_count += 1
                 continue
     
     # Save messages to a JSON file
@@ -239,7 +272,14 @@ async def scrape_messages(channel_id, limit=None, after=None, before=None):
         output_file,
         f"/DiscordBot/{output_file}",
     )  # Upload JSON file to cloud storage
-    return message_count, oldest_id
+    stats = {
+        "messages": message_count,
+        "message_errors": message_error_count,
+        "attachments": attachment_count,
+        "attachments_ok": attachment_success,
+        "attachments_failed": attachment_fail,
+    }
+    return stats, oldest_id
 
 # Event handler: Runs when the bot connects to Discord
 @client.event
@@ -257,13 +297,35 @@ async def on_ready():
                 _log("✅ Backfill complete, no older messages to scrape.")
                 break
             limit = SCRAPE_BATCH_SIZE if SCRAPE_BATCH_SIZE > 0 else 200
-            message_count, oldest_id = await scrape_messages(
+            _log(f"▶️ Backfill batch {batches + 1} starting (limit={limit}).")
+            started_at = time.monotonic()
+            stats, oldest_id = await scrape_messages(
                 SCRAPE_CHANNEL_ID,
                 limit=limit,
                 after=None,
                 before=discord.Object(id=before_id) if before_id else None,
             )
-            if message_count == 0:
+            elapsed = time.monotonic() - started_at
+            _log(
+                "✅ Batch done: "
+                f"messages={stats['messages']} attachments={stats['attachments']} "
+                f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
+                f"message_errors={stats['message_errors']} duration={elapsed:.1f}s"
+            )
+            _log_json(
+                "batch_complete",
+                {
+                    "mode": "backfill",
+                    "batch": batches + 1,
+                    "messages": stats["messages"],
+                    "message_errors": stats["message_errors"],
+                    "attachments": stats["attachments"],
+                    "attachments_ok": stats["attachments_ok"],
+                    "attachments_failed": stats["attachments_failed"],
+                    "duration_seconds": round(elapsed, 2),
+                },
+            )
+            if stats["messages"] == 0:
                 _log("✅ Backfill complete, no older messages to scrape.")
                 _set_backfill_state(state, None, True)
                 _save_state(SCRAPE_STATE_PATH, state)
@@ -290,11 +352,32 @@ async def on_ready():
         if last_run is not None:
             after_candidates.append(last_run)
         after = max(after_candidates) if after_candidates else None
-        await scrape_messages(
+        _log("▶️ Scrape run starting.")
+        started_at = time.monotonic()
+        stats, _ = await scrape_messages(
             SCRAPE_CHANNEL_ID,
             limit=limit,
             after=after,
             before=None,
+        )
+        elapsed = time.monotonic() - started_at
+        _log(
+            "✅ Run done: "
+            f"messages={stats['messages']} attachments={stats['attachments']} "
+            f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
+            f"message_errors={stats['message_errors']} duration={elapsed:.1f}s"
+        )
+        _log_json(
+            "run_complete",
+            {
+                "mode": "latest",
+                "messages": stats["messages"],
+                "message_errors": stats["message_errors"],
+                "attachments": stats["attachments"],
+                "attachments_ok": stats["attachments_ok"],
+                "attachments_failed": stats["attachments_failed"],
+                "duration_seconds": round(elapsed, 2),
+            },
         )
         _set_last_run(state, datetime.now(timezone.utc))
         _save_state(SCRAPE_STATE_PATH, state)
