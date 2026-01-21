@@ -12,18 +12,31 @@ and store them in a clean, searchable archive.
 ## Output files (example)
 - img_001.jpg
 - vid_001.mp4
-- metadata.json
+- metadata_<timestamp>.json
 
 ## Quick start (local archive)
 1) Copy `.env.example` to `.env`.
 2) Set `DISCORD_BOT_TOKEN` and `SCRAPE_CHANNEL_ID`.
 3) Run `python discord_scraper.py`.
 
+## Bot setup (Discord)
+1) Discord Developer Portal -> Applications -> New Application.
+2) Bot tab -> Add Bot -> copy token to `DISCORD_BOT_TOKEN`.
+3) Enable `Message Content Intent` under Privileged Gateway Intents.
+4) OAuth2 -> URL Generator -> scope `bot`.
+5) Permissions: `View Channels` + `Read Message History`.
+6) Open the generated URL to invite the bot.
+
 ## Scraper settings
 - `SCRAPE_LIMIT`: Max messages per run (0 = no limit).
 - `SCRAPE_SINCE_DAYS`: Only scrape recent messages (0 = no date filter).
 - `SCRAPE_USE_LAST_RUN`: If true, only scrape new messages since last run.
 - `SCRAPE_STATE_PATH`: Where the last-run timestamp is stored.
+- `SCRAPE_BACKFILL`: Enable backfill mode to scrape older history in batches.
+- `SCRAPE_BATCH_SIZE`: Messages per run when backfilling.
+- `SCRAPE_BACKFILL_AUTORUN`: Run multiple backfill batches in one run.
+- `SCRAPE_BACKFILL_SLEEP_SECONDS`: Pause between backfill batches.
+- `SCRAPE_BACKFILL_MAX_BATCHES`: Cap batches per run (0 = unlimited).
 - `SCRAPE_DRY_RUN`: Log what would be downloaded without saving files.
 - `SCRAPE_METADATA_ONLY`: Save metadata JSON but skip file downloads.
 - `LOG_TO_FILE`: Append logs to `LOG_PATH`.
@@ -32,3 +45,7 @@ and store them in a clean, searchable archive.
 - `DOWNLOAD_BACKOFF_SECONDS`: Base backoff for retries (seconds).
 - `DOWNLOAD_TIMEOUT_SECONDS`: Per-download timeout (seconds).
 - `IMAGE_EXTENSIONS` / `VIDEO_EXTENSIONS`: Comma-separated file extensions.
+
+Backfill tip: set `SCRAPE_BACKFILL=true` and rerun the script multiple times to walk backwards in history. Delete `SCRAPE_STATE_PATH` to start over.
+
+Metadata output: each run writes a timestamped JSON file under `scraped_data/` to avoid overwriting previous batches.
