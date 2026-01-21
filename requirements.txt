@@ -1,0 +1,7 @@
+discord.py
+aiohttp
+python-dotenv
+
+# Optional (only if uploads enabled)
+dropbox
+google-cloud-storage

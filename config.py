@@ -66,6 +66,9 @@ SCRAPE_DRY_RUN = _env_bool("SCRAPE_DRY_RUN", False)
 SCRAPE_METADATA_ONLY = _env_bool("SCRAPE_METADATA_ONLY", False)
 LOG_TO_FILE = _env_bool("LOG_TO_FILE", False)
 LOG_PATH = os.getenv("LOG_PATH", "scrape.log")
+DOWNLOAD_RETRIES = _env_int("DOWNLOAD_RETRIES", 3)
+DOWNLOAD_BACKOFF_SECONDS = _env_int("DOWNLOAD_BACKOFF_SECONDS", 2)
+DOWNLOAD_TIMEOUT_SECONDS = _env_int("DOWNLOAD_TIMEOUT_SECONDS", 30)
 IMAGE_EXTENSIONS = _env_csv_list(
     "IMAGE_EXTENSIONS",
     [".png", ".jpg", ".jpeg", ".gif"],

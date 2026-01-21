@@ -28,4 +28,7 @@ and store them in a clean, searchable archive.
 - `SCRAPE_METADATA_ONLY`: Save metadata JSON but skip file downloads.
 - `LOG_TO_FILE`: Append logs to `LOG_PATH`.
 - `LOG_PATH`: Log file location when `LOG_TO_FILE=true`.
+- `DOWNLOAD_RETRIES`: How many times to retry a failed download.
+- `DOWNLOAD_BACKOFF_SECONDS`: Base backoff for retries (seconds).
+- `DOWNLOAD_TIMEOUT_SECONDS`: Per-download timeout (seconds).
 - `IMAGE_EXTENSIONS` / `VIDEO_EXTENSIONS`: Comma-separated file extensions.
