@@ -41,6 +41,8 @@ When you run in a terminal, you get a simple menu to pick "latest" vs "backfill"
 - `SCRAPE_STATE_PATH`: Where the last-run timestamp is stored.
 - `SCRAPE_OUTPUT_DIR`: Base output folder (images, videos, data, logs).
 - `SCRAPE_MEDIA_DIR`: Optional folder for images/videos only.
+
+State file per channel: if `SCRAPE_STATE_PATH` is left as `scrape_state.json`, the scraper will automatically create `scrape_state_<channel_id>.json` so channels do not share state. You can also set `SCRAPE_STATE_PATH` to include `{channel_id}`.
 - `UPLOAD_BASE_PATH`: Cloud base path (only used if uploads enabled).
 - `UPLOAD_IMAGEBANK_PATH`: Cloud images path (only used if uploads enabled).
 - `SCRAPE_BACKFILL`: Enable backfill mode to scrape older history in batches.

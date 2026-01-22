@@ -80,7 +80,18 @@ def _resolve_output_path(path, base_dir=None):
     return os.path.join(base, path)
 
 
-def _init_output_paths():
+def _resolve_state_path(channel_id):
+    template = SCRAPE_STATE_PATH
+    if "{channel_id}" in template:
+        resolved = template.format(channel_id=channel_id)
+    elif template == "scrape_state.json":
+        resolved = f"scrape_state_{channel_id}.json"
+    else:
+        resolved = template
+    return _resolve_output_path(resolved)
+
+
+def _init_output_paths(channel_id):
     global SCRAPED_IMAGES_DIR
     global SCRAPED_VIDEOS_DIR
     global SCRAPED_DATA_DIR
@@ -94,7 +105,7 @@ def _init_output_paths():
     SCRAPED_IMAGES_DIR = _resolve_output_path("scraped_images", media_base)
     SCRAPED_VIDEOS_DIR = _resolve_output_path("scraped_videos", media_base)
     SCRAPED_DATA_DIR = _resolve_output_path("scraped_data")
-    STATE_PATH = _resolve_output_path(SCRAPE_STATE_PATH)
+    STATE_PATH = _resolve_state_path(channel_id)
     LOG_PATH_RESOLVED = _resolve_output_path(LOG_PATH)
     LOG_ERROR_PATH_RESOLVED = _resolve_output_path(LOG_ERROR_PATH)
     LOG_JSON_PATH_RESOLVED = _resolve_output_path(LOG_JSON_PATH)
@@ -438,6 +449,7 @@ async def scrape_messages(
     attachment_skipped_dedupe = 0
     attachment_skipped_size = 0
     oldest_id = None
+    oldest_timestamp = None
 
     timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT_SECONDS)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -506,6 +518,7 @@ async def scrape_messages(
                 messages.append(msg_data)
                 message_count += 1
                 oldest_id = message.id
+                oldest_timestamp = message.created_at
             except Exception as exc:
                 _log_error(f"⚠️ Message skipped due to error: {exc}")
                 message_error_count += 1
@@ -534,15 +547,17 @@ async def scrape_messages(
         "attachments_failed": attachment_fail,
         "attachments_skipped_dedupe": attachment_skipped_dedupe,
         "attachments_skipped_size": attachment_skipped_size,
+        "oldest_timestamp": oldest_timestamp.isoformat() if oldest_timestamp else None,
     }
     return stats, oldest_id
 
 # Event handler: Runs when the bot connects to Discord
 @client.event
 async def on_ready():
-    _log(f"Bot is online as {client.user}")
     if SCRAPE_CHANNEL_ID == 0:
         raise RuntimeError("SCRAPE_CHANNEL_ID is not set.")
+    _init_output_paths(SCRAPE_CHANNEL_ID)
+    _log(f"Bot is online as {client.user}")
     _ensure_state_path(STATE_PATH)
     await _validate_channel_access(SCRAPE_CHANNEL_ID)
     state = _load_state(STATE_PATH)
@@ -584,7 +599,8 @@ async def on_ready():
                 f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
                 f"skipped_dedupe={stats['attachments_skipped_dedupe']} "
                 f"skipped_size={stats['attachments_skipped_size']} "
-                f"message_errors={stats['message_errors']} duration={elapsed:.1f}s"
+                f"message_errors={stats['message_errors']} duration={elapsed:.1f}s "
+                f"oldest={stats['oldest_timestamp']}"
             )
             _log_json(
                 "batch_complete",
@@ -598,6 +614,7 @@ async def on_ready():
                     "attachments_failed": stats["attachments_failed"],
                     "attachments_skipped_dedupe": stats["attachments_skipped_dedupe"],
                     "attachments_skipped_size": stats["attachments_skipped_size"],
+                    "oldest_timestamp": stats["oldest_timestamp"],
                     "duration_seconds": round(elapsed, 2),
                 },
             )
@@ -647,7 +664,8 @@ async def on_ready():
             f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
             f"skipped_dedupe={stats['attachments_skipped_dedupe']} "
             f"skipped_size={stats['attachments_skipped_size']} "
-            f"message_errors={stats['message_errors']} duration={elapsed:.1f}s"
+            f"message_errors={stats['message_errors']} duration={elapsed:.1f}s "
+            f"oldest={stats['oldest_timestamp']}"
         )
         _log_json(
             "run_complete",
@@ -660,6 +678,7 @@ async def on_ready():
                 "attachments_failed": stats["attachments_failed"],
                 "attachments_skipped_dedupe": stats["attachments_skipped_dedupe"],
                 "attachments_skipped_size": stats["attachments_skipped_size"],
+                "oldest_timestamp": stats["oldest_timestamp"],
                 "duration_seconds": round(elapsed, 2),
             },
         )
@@ -691,5 +710,4 @@ async def on_ready():
 
 # Start the Discord bot
 _configure_runtime_settings()
-_init_output_paths()
 client.run(DISCORD_BOT_TOKEN)
