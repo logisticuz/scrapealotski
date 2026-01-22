@@ -20,7 +20,7 @@ and store them in a clean, searchable archive.
 3) Run `python discord_scraper.py`.
 
 ## Interactive menu
-When you run in a terminal, you get a simple menu to pick "latest" vs "backfill" and override limits for that run. Defaults come from `.env`, so you can just hit enter to accept them.
+When you run in a terminal, you get a simple menu to pick "latest" vs "backfill" and override limits for that run, including the output folder. Defaults come from `.env`, so you can just hit enter to accept them.
 
 ## Bot setup (Discord)
 1) Discord Developer Portal -> Applications -> New Application.
@@ -35,6 +35,8 @@ When you run in a terminal, you get a simple menu to pick "latest" vs "backfill"
 - `SCRAPE_SINCE_DAYS`: Only scrape recent messages (0 = no date filter).
 - `SCRAPE_USE_LAST_RUN`: If true, only scrape new messages since last run.
 - `SCRAPE_STATE_PATH`: Where the last-run timestamp is stored.
+- `SCRAPE_OUTPUT_DIR`: Base output folder (images, videos, data, logs).
+- `SCRAPE_MEDIA_DIR`: Optional folder for images/videos only.
 - `SCRAPE_BACKFILL`: Enable backfill mode to scrape older history in batches.
 - `SCRAPE_BATCH_SIZE`: Messages per run when backfilling.
 - `SCRAPE_BACKFILL_AUTORUN`: Run multiple backfill batches in one run.

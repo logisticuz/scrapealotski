@@ -31,16 +31,23 @@ from config import (
     SCRAPE_DRY_RUN,
     SCRAPE_LIMIT,
     SCRAPE_METADATA_ONLY,
+    SCRAPE_OUTPUT_DIR,
+    SCRAPE_MEDIA_DIR,
     SCRAPE_SINCE_DAYS,
     SCRAPE_STATE_PATH,
     SCRAPE_USE_LAST_RUN,
     VIDEO_EXTENSIONS,
 )
 
-# Ensure required directories exist for storing scraped data
-os.makedirs("scraped_images", exist_ok=True)
-os.makedirs("scraped_videos", exist_ok=True)
-os.makedirs("scraped_data", exist_ok=True)
+
+SCRAPED_IMAGES_DIR = ""
+SCRAPED_VIDEOS_DIR = ""
+SCRAPED_DATA_DIR = ""
+STATE_PATH = ""
+LOG_PATH_RESOLVED = ""
+LOG_ERROR_PATH_RESOLVED = ""
+LOG_JSON_PATH_RESOLVED = ""
+DEDUPE_INDEX_PATH_RESOLVED = ""
 
 # Discord bot intents (defines what events the bot can listen to)
 intents = discord.Intents.default()
@@ -58,6 +65,42 @@ RUN_SCRAPE_SINCE_DAYS = SCRAPE_SINCE_DAYS
 RUN_SCRAPE_USE_LAST_RUN = SCRAPE_USE_LAST_RUN
 RUN_SCRAPE_DRY_RUN = SCRAPE_DRY_RUN
 RUN_SCRAPE_METADATA_ONLY = SCRAPE_METADATA_ONLY
+RUN_SCRAPE_OUTPUT_DIR = SCRAPE_OUTPUT_DIR
+RUN_SCRAPE_MEDIA_DIR = SCRAPE_MEDIA_DIR
+
+
+def _resolve_output_path(path, base_dir=None):
+    base = base_dir if base_dir is not None else RUN_SCRAPE_OUTPUT_DIR
+    if not base:
+        return path
+    if os.path.isabs(path):
+        return path
+    return os.path.join(base, path)
+
+
+def _init_output_paths():
+    global SCRAPED_IMAGES_DIR
+    global SCRAPED_VIDEOS_DIR
+    global SCRAPED_DATA_DIR
+    global STATE_PATH
+    global LOG_PATH_RESOLVED
+    global LOG_ERROR_PATH_RESOLVED
+    global LOG_JSON_PATH_RESOLVED
+    global DEDUPE_INDEX_PATH_RESOLVED
+
+    media_base = RUN_SCRAPE_MEDIA_DIR or RUN_SCRAPE_OUTPUT_DIR
+    SCRAPED_IMAGES_DIR = _resolve_output_path("scraped_images", media_base)
+    SCRAPED_VIDEOS_DIR = _resolve_output_path("scraped_videos", media_base)
+    SCRAPED_DATA_DIR = _resolve_output_path("scraped_data")
+    STATE_PATH = _resolve_output_path(SCRAPE_STATE_PATH)
+    LOG_PATH_RESOLVED = _resolve_output_path(LOG_PATH)
+    LOG_ERROR_PATH_RESOLVED = _resolve_output_path(LOG_ERROR_PATH)
+    LOG_JSON_PATH_RESOLVED = _resolve_output_path(LOG_JSON_PATH)
+    DEDUPE_INDEX_PATH_RESOLVED = _resolve_output_path(DEDUPE_INDEX_PATH)
+
+    os.makedirs(SCRAPED_IMAGES_DIR, exist_ok=True)
+    os.makedirs(SCRAPED_VIDEOS_DIR, exist_ok=True)
+    os.makedirs(SCRAPED_DATA_DIR, exist_ok=True)
 
 
 def _log(message):
@@ -66,7 +109,7 @@ def _log(message):
     print(line)
     if not LOG_TO_FILE:
         return
-    with open(LOG_PATH, "a", encoding="utf-8") as handle:
+    with open(LOG_PATH_RESOLVED, "a", encoding="utf-8") as handle:
         handle.write(f"{line}\n")
 
 
@@ -74,7 +117,7 @@ def _log_error(message):
     _log(message)
     if not LOG_ERRORS_TO_FILE:
         return
-    with open(LOG_ERROR_PATH, "a", encoding="utf-8") as handle:
+    with open(LOG_ERROR_PATH_RESOLVED, "a", encoding="utf-8") as handle:
         handle.write(f"{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
 
 
@@ -86,7 +129,7 @@ def _log_json(event, payload):
         "event": event,
         "payload": payload,
     }
-    with open(LOG_JSON_PATH, "a", encoding="utf-8") as handle:
+    with open(LOG_JSON_PATH_RESOLVED, "a", encoding="utf-8") as handle:
         handle.write(f"{json.dumps(record, ensure_ascii=False)}\n")
 
 
@@ -155,6 +198,14 @@ def _prompt_bool(label, default):
     return value in {"y", "yes", "true", "1"}
 
 
+def _prompt_path(label, default):
+    display_default = default or "(project folder)"
+    value = input(f"{label} [{display_default}]: ").strip()
+    if not value:
+        return default
+    return value
+
+
 def _configure_runtime_settings():
     global RUN_SCRAPE_BACKFILL
     global RUN_SCRAPE_BATCH_SIZE
@@ -166,6 +217,8 @@ def _configure_runtime_settings():
     global RUN_SCRAPE_USE_LAST_RUN
     global RUN_SCRAPE_DRY_RUN
     global RUN_SCRAPE_METADATA_ONLY
+    global RUN_SCRAPE_OUTPUT_DIR
+    global RUN_SCRAPE_MEDIA_DIR
 
     if not sys.stdin.isatty():
         return
@@ -203,6 +256,12 @@ def _configure_runtime_settings():
     RUN_SCRAPE_DRY_RUN = _prompt_bool("Dry run (no downloads)", RUN_SCRAPE_DRY_RUN)
     RUN_SCRAPE_METADATA_ONLY = _prompt_bool(
         "Metadata only (skip downloads)", RUN_SCRAPE_METADATA_ONLY
+    )
+    RUN_SCRAPE_OUTPUT_DIR = _prompt_path(
+        "Output folder", RUN_SCRAPE_OUTPUT_DIR
+    )
+    RUN_SCRAPE_MEDIA_DIR = _prompt_path(
+        "Media folder (images/videos)", RUN_SCRAPE_MEDIA_DIR
     )
 
 
@@ -327,9 +386,10 @@ async def download_attachment(session, url, filename):
                     with open(filename, "wb") as f:
                         f.write(await resp.read())
                     _log(f"📥 Downloaded: {filename}")
+                    cloud_name = os.path.basename(filename)
                     await _upload_file_async(
                         filename,
-                        f"/DiscordBot/ImageBank/{filename}",
+                        f"/DiscordBot/ImageBank/{cloud_name}",
                     )  # Upload to cloud storage
                     return True
                 if resp.status == 429:
@@ -391,9 +451,15 @@ async def scrape_messages(
                     is_image = any(attachment_name.endswith(ext) for ext in IMAGE_EXTENSIONS)
                     is_video = any(attachment_name.endswith(ext) for ext in VIDEO_EXTENSIONS)
                     if is_image:
-                        filename = f"scraped_images/{attachment.id}_{attachment.filename}"
+                        filename = os.path.join(
+                            SCRAPED_IMAGES_DIR,
+                            f"{attachment.id}_{attachment.filename}",
+                        )
                     elif is_video:
-                        filename = f"scraped_videos/{attachment.id}_{attachment.filename}"
+                        filename = os.path.join(
+                            SCRAPED_VIDEOS_DIR,
+                            f"{attachment.id}_{attachment.filename}",
+                        )
                     else:
                         continue
                     if dedupe_index is not None and attachment.id in dedupe_index:
@@ -417,7 +483,11 @@ async def scrape_messages(
                             and not RUN_SCRAPE_DRY_RUN
                         ):
                             dedupe_index.add(attachment.id)
-                            _append_dedupe_entry(DEDUPE_INDEX_PATH, attachment.id, filename)
+                            _append_dedupe_entry(
+                                DEDUPE_INDEX_PATH_RESOLVED,
+                                attachment.id,
+                                filename,
+                            )
                     else:
                         msg_data["errors"].append(
                             {
@@ -437,14 +507,18 @@ async def scrape_messages(
     
     # Save messages to a JSON file
     run_stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    output_file = f"scraped_data/{channel_id}_{run_stamp}.json"
+    output_file = os.path.join(
+        SCRAPED_DATA_DIR,
+        f"{channel_id}_{run_stamp}.json",
+    )
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(messages, f, ensure_ascii=False, indent=4)
 
     _log(f"✅ Saved {len(messages)} messages from channel {channel_id}!")
+    cloud_relative = f"scraped_data/{os.path.basename(output_file)}"
     await _upload_file_async(
         output_file,
-        f"/DiscordBot/{output_file}",
+        f"/DiscordBot/{cloud_relative}",
     )  # Upload JSON file to cloud storage
     stats = {
         "messages": message_count,
@@ -463,10 +537,10 @@ async def on_ready():
     _log(f"Bot is online as {client.user}")
     if SCRAPE_CHANNEL_ID == 0:
         raise RuntimeError("SCRAPE_CHANNEL_ID is not set.")
-    _ensure_state_path(SCRAPE_STATE_PATH)
+    _ensure_state_path(STATE_PATH)
     await _validate_channel_access(SCRAPE_CHANNEL_ID)
-    state = _load_state(SCRAPE_STATE_PATH)
-    dedupe_index = _load_dedupe_index(DEDUPE_INDEX_PATH)
+    state = _load_state(STATE_PATH)
+    dedupe_index = _load_dedupe_index(DEDUPE_INDEX_PATH_RESOLVED)
     max_bytes = MAX_ATTACHMENT_MB * 1024 * 1024 if MAX_ATTACHMENT_MB > 0 else 0
     total_stats = {
         "messages": 0,
@@ -525,10 +599,10 @@ async def on_ready():
             if stats["messages"] == 0:
                 _log("✅ Backfill complete, no older messages to scrape.")
                 _set_backfill_state(state, None, True)
-                _save_state(SCRAPE_STATE_PATH, state)
+                _save_state(STATE_PATH, state)
                 break
             _set_backfill_state(state, oldest_id, False)
-            _save_state(SCRAPE_STATE_PATH, state)
+            _save_state(STATE_PATH, state)
             _log(f"ℹ️ Backfill cursor saved: {oldest_id}")
             batches += 1
             if not RUN_SCRAPE_BACKFILL_AUTORUN:
@@ -585,7 +659,7 @@ async def on_ready():
         )
         _merge_stats(total_stats, stats)
         _set_last_run(state, datetime.now(timezone.utc))
-        _save_state(SCRAPE_STATE_PATH, state)
+        _save_state(STATE_PATH, state)
     _log(
         "🏁 Summary: "
         f"messages={total_stats['messages']} attachments={total_stats['attachments']} "
@@ -611,4 +685,5 @@ async def on_ready():
 
 # Start the Discord bot
 _configure_runtime_settings()
+_init_output_paths()
 client.run(DISCORD_BOT_TOKEN)
