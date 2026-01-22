@@ -4,6 +4,7 @@ import aiohttp
 import asyncio
 import json
 import time
+import sys
 from datetime import datetime, timedelta, timezone
 from storage_handler import upload_file
 from config import (
@@ -45,6 +46,17 @@ intents.messages = True
 intents.message_content = True  # Required to read messages
 client = discord.Client(intents=intents)
 
+RUN_SCRAPE_BACKFILL = SCRAPE_BACKFILL
+RUN_SCRAPE_BATCH_SIZE = SCRAPE_BATCH_SIZE
+RUN_SCRAPE_BACKFILL_AUTORUN = SCRAPE_BACKFILL_AUTORUN
+RUN_SCRAPE_BACKFILL_SLEEP_SECONDS = SCRAPE_BACKFILL_SLEEP_SECONDS
+RUN_SCRAPE_BACKFILL_MAX_BATCHES = SCRAPE_BACKFILL_MAX_BATCHES
+RUN_SCRAPE_LIMIT = SCRAPE_LIMIT
+RUN_SCRAPE_SINCE_DAYS = SCRAPE_SINCE_DAYS
+RUN_SCRAPE_USE_LAST_RUN = SCRAPE_USE_LAST_RUN
+RUN_SCRAPE_DRY_RUN = SCRAPE_DRY_RUN
+RUN_SCRAPE_METADATA_ONLY = SCRAPE_METADATA_ONLY
+
 
 def _log(message):
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
@@ -76,6 +88,76 @@ def _log_json(event, payload):
         handle.write(f"{json.dumps(record, ensure_ascii=False)}\n")
 
 
+def _prompt_int(label, default):
+    value = input(f"{label} [{default}]: ").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        print("Invalid number, keeping default.")
+        return default
+
+
+def _prompt_bool(label, default):
+    default_label = "Y/n" if default else "y/N"
+    value = input(f"{label} ({default_label}): ").strip().lower()
+    if not value:
+        return default
+    return value in {"y", "yes", "true", "1"}
+
+
+def _configure_runtime_settings():
+    global RUN_SCRAPE_BACKFILL
+    global RUN_SCRAPE_BATCH_SIZE
+    global RUN_SCRAPE_BACKFILL_AUTORUN
+    global RUN_SCRAPE_BACKFILL_SLEEP_SECONDS
+    global RUN_SCRAPE_BACKFILL_MAX_BATCHES
+    global RUN_SCRAPE_LIMIT
+    global RUN_SCRAPE_SINCE_DAYS
+    global RUN_SCRAPE_USE_LAST_RUN
+    global RUN_SCRAPE_DRY_RUN
+    global RUN_SCRAPE_METADATA_ONLY
+
+    if not sys.stdin.isatty():
+        return
+    print("Select mode:")
+    print("  1) Latest (new messages)")
+    print("  2) Backfill (older history)")
+    choice = input("Mode [1]: ").strip() or "1"
+    if choice == "2":
+        RUN_SCRAPE_BACKFILL = True
+        RUN_SCRAPE_BATCH_SIZE = _prompt_int(
+            "Backfill batch size", RUN_SCRAPE_BATCH_SIZE
+        )
+        RUN_SCRAPE_BACKFILL_AUTORUN = _prompt_bool(
+            "Auto-run multiple batches", RUN_SCRAPE_BACKFILL_AUTORUN
+        )
+        if RUN_SCRAPE_BACKFILL_AUTORUN:
+            RUN_SCRAPE_BACKFILL_SLEEP_SECONDS = _prompt_int(
+                "Sleep seconds between batches", RUN_SCRAPE_BACKFILL_SLEEP_SECONDS
+            )
+            RUN_SCRAPE_BACKFILL_MAX_BATCHES = _prompt_int(
+                "Max batches per run (0 = unlimited)", RUN_SCRAPE_BACKFILL_MAX_BATCHES
+            )
+        RUN_SCRAPE_LIMIT = 0
+        RUN_SCRAPE_SINCE_DAYS = 0
+        RUN_SCRAPE_USE_LAST_RUN = False
+    else:
+        RUN_SCRAPE_BACKFILL = False
+        RUN_SCRAPE_LIMIT = _prompt_int("Limit (0 = no limit)", RUN_SCRAPE_LIMIT)
+        RUN_SCRAPE_SINCE_DAYS = _prompt_int(
+            "Since days (0 = no filter)", RUN_SCRAPE_SINCE_DAYS
+        )
+        RUN_SCRAPE_USE_LAST_RUN = _prompt_bool(
+            "Use last-run cursor", RUN_SCRAPE_USE_LAST_RUN
+        )
+    RUN_SCRAPE_DRY_RUN = _prompt_bool("Dry run (no downloads)", RUN_SCRAPE_DRY_RUN)
+    RUN_SCRAPE_METADATA_ONLY = _prompt_bool(
+        "Metadata only (skip downloads)", RUN_SCRAPE_METADATA_ONLY
+    )
+
+
 async def _upload_file_async(local_path, cloud_path):
     if not ENABLE_UPLOADS:
         return
@@ -83,7 +165,7 @@ async def _upload_file_async(local_path, cloud_path):
 
 
 def _uses_state():
-    return SCRAPE_USE_LAST_RUN or SCRAPE_BACKFILL
+    return RUN_SCRAPE_USE_LAST_RUN or RUN_SCRAPE_BACKFILL
 
 
 def _load_state(path):
@@ -109,7 +191,7 @@ def _save_state(path, state):
 
 
 def _get_last_run(state):
-    if not SCRAPE_USE_LAST_RUN:
+    if not RUN_SCRAPE_USE_LAST_RUN:
         return None
     timestamp = state.get("last_run")
     if not timestamp:
@@ -124,13 +206,13 @@ def _get_last_run(state):
 
 
 def _set_last_run(state, timestamp):
-    if not SCRAPE_USE_LAST_RUN:
+    if not RUN_SCRAPE_USE_LAST_RUN:
         return
     state["last_run"] = timestamp.isoformat()
 
 
 def _get_backfill_state(state):
-    if not SCRAPE_BACKFILL:
+    if not RUN_SCRAPE_BACKFILL:
         return None, False
     before_id = state.get("backfill_before_id")
     complete = bool(state.get("backfill_complete", False))
@@ -143,7 +225,7 @@ def _get_backfill_state(state):
 
 
 def _set_backfill_state(state, before_id, complete):
-    if not SCRAPE_BACKFILL:
+    if not RUN_SCRAPE_BACKFILL:
         return
     state["backfill_complete"] = complete
     if before_id is None:
@@ -166,10 +248,10 @@ def _ensure_state_path(path):
 
 # Function to download and save attachments (images, files, etc.)
 async def download_attachment(session, url, filename):
-    if SCRAPE_METADATA_ONLY:
+    if RUN_SCRAPE_METADATA_ONLY:
         _log(f"🗒️ Metadata only, skipping download: {filename}")
         return True
-    if SCRAPE_DRY_RUN:
+    if RUN_SCRAPE_DRY_RUN:
         _log(f"🔎 Dry run, would download: {filename}")
         return True
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
@@ -289,14 +371,14 @@ async def on_ready():
         raise RuntimeError("SCRAPE_CHANNEL_ID is not set.")
     _ensure_state_path(SCRAPE_STATE_PATH)
     state = _load_state(SCRAPE_STATE_PATH)
-    if SCRAPE_BACKFILL:
+    if RUN_SCRAPE_BACKFILL:
         batches = 0
         while True:
             before_id, backfill_complete = _get_backfill_state(state)
             if backfill_complete:
                 _log("✅ Backfill complete, no older messages to scrape.")
                 break
-            limit = SCRAPE_BATCH_SIZE if SCRAPE_BATCH_SIZE > 0 else 200
+            limit = RUN_SCRAPE_BATCH_SIZE if RUN_SCRAPE_BATCH_SIZE > 0 else 200
             _log(f"▶️ Backfill batch {batches + 1} starting (limit={limit}).")
             started_at = time.monotonic()
             stats, oldest_id = await scrape_messages(
@@ -334,23 +416,24 @@ async def on_ready():
             _save_state(SCRAPE_STATE_PATH, state)
             _log(f"ℹ️ Backfill cursor saved: {oldest_id}")
             batches += 1
-            if not SCRAPE_BACKFILL_AUTORUN:
+            if not RUN_SCRAPE_BACKFILL_AUTORUN:
                 break
-            if SCRAPE_BACKFILL_MAX_BATCHES > 0 and batches >= SCRAPE_BACKFILL_MAX_BATCHES:
+            if RUN_SCRAPE_BACKFILL_MAX_BATCHES > 0 and batches >= RUN_SCRAPE_BACKFILL_MAX_BATCHES:
                 _log("ℹ️ Backfill max batches reached, stopping.")
                 break
-            _log(f"⏸️ Sleeping {SCRAPE_BACKFILL_SLEEP_SECONDS}s before next batch.")
-            await asyncio.sleep(SCRAPE_BACKFILL_SLEEP_SECONDS)
+            _log(f"⏸️ Sleeping {RUN_SCRAPE_BACKFILL_SLEEP_SECONDS}s before next batch.")
+            await asyncio.sleep(RUN_SCRAPE_BACKFILL_SLEEP_SECONDS)
     else:
-        limit = SCRAPE_LIMIT if SCRAPE_LIMIT > 0 else None
+        limit = RUN_SCRAPE_LIMIT if RUN_SCRAPE_LIMIT > 0 else None
         after_candidates = []
-        if SCRAPE_SINCE_DAYS > 0:
+        if RUN_SCRAPE_SINCE_DAYS > 0:
             after_candidates.append(
-                datetime.now(timezone.utc) - timedelta(days=SCRAPE_SINCE_DAYS)
+                datetime.now(timezone.utc) - timedelta(days=RUN_SCRAPE_SINCE_DAYS)
             )
-        last_run = _get_last_run(state)
-        if last_run is not None:
-            after_candidates.append(last_run)
+        if RUN_SCRAPE_USE_LAST_RUN:
+            last_run = _get_last_run(state)
+            if last_run is not None:
+                after_candidates.append(last_run)
         after = max(after_candidates) if after_candidates else None
         _log("▶️ Scrape run starting.")
         started_at = time.monotonic()
@@ -384,4 +467,5 @@ async def on_ready():
     await client.close()
 
 # Start the Discord bot
+_configure_runtime_settings()
 client.run(DISCORD_BOT_TOKEN)

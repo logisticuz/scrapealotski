@@ -19,6 +19,9 @@ and store them in a clean, searchable archive.
 2) Set `DISCORD_BOT_TOKEN` and `SCRAPE_CHANNEL_ID`.
 3) Run `python discord_scraper.py`.
 
+## Interactive menu
+When you run in a terminal, you get a simple menu to pick "latest" vs "backfill" and override limits for that run. Defaults come from `.env`, so you can just hit enter to accept them.
+
 ## Bot setup (Discord)
 1) Discord Developer Portal -> Applications -> New Application.
 2) Bot tab -> Add Bot -> copy token to `DISCORD_BOT_TOKEN`.
