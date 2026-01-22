@@ -36,6 +36,8 @@ from config import (
     SCRAPE_SINCE_DAYS,
     SCRAPE_STATE_PATH,
     SCRAPE_USE_LAST_RUN,
+    UPLOAD_BASE_PATH,
+    UPLOAD_IMAGEBANK_PATH,
     VIDEO_EXTENSIONS,
 )
 
@@ -103,22 +105,26 @@ def _init_output_paths():
     os.makedirs(SCRAPED_DATA_DIR, exist_ok=True)
 
 
+def _write_log_line(path, line):
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"{line}\n")
+
+
 def _log(message):
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     line = f"{timestamp} {message}"
     print(line)
     if not LOG_TO_FILE:
         return
-    with open(LOG_PATH_RESOLVED, "a", encoding="utf-8") as handle:
-        handle.write(f"{line}\n")
+    _write_log_line(LOG_PATH_RESOLVED, line)
 
 
 def _log_error(message):
     _log(message)
     if not LOG_ERRORS_TO_FILE:
         return
-    with open(LOG_ERROR_PATH_RESOLVED, "a", encoding="utf-8") as handle:
-        handle.write(f"{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    _write_log_line(LOG_ERROR_PATH_RESOLVED, f"{timestamp} {message}")
 
 
 def _log_json(event, payload):
@@ -389,7 +395,7 @@ async def download_attachment(session, url, filename):
                     cloud_name = os.path.basename(filename)
                     await _upload_file_async(
                         filename,
-                        f"/DiscordBot/ImageBank/{cloud_name}",
+                        f"{UPLOAD_IMAGEBANK_PATH}/{cloud_name}",
                     )  # Upload to cloud storage
                     return True
                 if resp.status == 429:
@@ -518,7 +524,7 @@ async def scrape_messages(
     cloud_relative = f"scraped_data/{os.path.basename(output_file)}"
     await _upload_file_async(
         output_file,
-        f"/DiscordBot/{cloud_relative}",
+        f"{UPLOAD_BASE_PATH}/{cloud_relative}",
     )  # Upload JSON file to cloud storage
     stats = {
         "messages": message_count,

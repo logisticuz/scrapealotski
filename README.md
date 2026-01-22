@@ -17,7 +17,11 @@ and store them in a clean, searchable archive.
 ## Quick start (local archive)
 1) Copy `.env.example` to `.env`.
 2) Set `DISCORD_BOT_TOKEN` and `SCRAPE_CHANNEL_ID`.
-3) Run `python discord_scraper.py`.
+3) Install deps: `pip install -r requirements.txt`.
+4) Run `python discord_scraper.py`.
+
+Optional uploads:
+- Install cloud deps with `pip install -r requirements-optional.txt`.
 
 ## Interactive menu
 When you run in a terminal, you get a simple menu to pick "latest" vs "backfill" and override limits for that run, including the output folder. Defaults come from `.env`, so you can just hit enter to accept them.
@@ -37,6 +41,8 @@ When you run in a terminal, you get a simple menu to pick "latest" vs "backfill"
 - `SCRAPE_STATE_PATH`: Where the last-run timestamp is stored.
 - `SCRAPE_OUTPUT_DIR`: Base output folder (images, videos, data, logs).
 - `SCRAPE_MEDIA_DIR`: Optional folder for images/videos only.
+- `UPLOAD_BASE_PATH`: Cloud base path (only used if uploads enabled).
+- `UPLOAD_IMAGEBANK_PATH`: Cloud images path (only used if uploads enabled).
 - `SCRAPE_BACKFILL`: Enable backfill mode to scrape older history in batches.
 - `SCRAPE_BATCH_SIZE`: Messages per run when backfilling.
 - `SCRAPE_BACKFILL_AUTORUN`: Run multiple backfill batches in one run.

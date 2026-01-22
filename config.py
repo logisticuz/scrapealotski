@@ -52,6 +52,8 @@ USE_DROPBOX = _env_bool("USE_DROPBOX", False)  # Set to True to use Dropbox uplo
 DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN", "")
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "")
 GCS_CREDENTIALS_PATH = os.getenv("GCS_CREDENTIALS_PATH", "")
+UPLOAD_BASE_PATH = os.getenv("UPLOAD_BASE_PATH", "/DiscordBot")
+UPLOAD_IMAGEBANK_PATH = os.getenv("UPLOAD_IMAGEBANK_PATH", "/DiscordBot/ImageBank")
 
 # Discord bot tokens
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
