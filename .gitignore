@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 .venv/
 CLAUDE.md
+GEMINI.md
