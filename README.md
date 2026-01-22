@@ -51,6 +51,8 @@ When you run in a terminal, you get a simple menu to pick "latest" vs "backfill"
 - `DOWNLOAD_RETRIES`: How many times to retry a failed download.
 - `DOWNLOAD_BACKOFF_SECONDS`: Base backoff for retries (seconds).
 - `DOWNLOAD_TIMEOUT_SECONDS`: Per-download timeout (seconds).
+- `MAX_ATTACHMENT_MB`: Skip attachments larger than this (0 = no limit).
+- `DEDUPE_INDEX_PATH`: JSONL index file used to avoid duplicate downloads.
 - `IMAGE_EXTENSIONS` / `VIDEO_EXTENSIONS`: Comma-separated file extensions.
 
 Backfill tip: set `SCRAPE_BACKFILL=true` and rerun the script multiple times to walk backwards in history. Delete `SCRAPE_STATE_PATH` to start over.

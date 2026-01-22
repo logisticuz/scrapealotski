@@ -78,6 +78,8 @@ LOG_JSON_PATH = os.getenv("LOG_JSON_PATH", "scrape_metrics.jsonl")
 DOWNLOAD_RETRIES = _env_int("DOWNLOAD_RETRIES", 3)
 DOWNLOAD_BACKOFF_SECONDS = _env_int("DOWNLOAD_BACKOFF_SECONDS", 2)
 DOWNLOAD_TIMEOUT_SECONDS = _env_int("DOWNLOAD_TIMEOUT_SECONDS", 30)
+MAX_ATTACHMENT_MB = _env_int("MAX_ATTACHMENT_MB", 0)
+DEDUPE_INDEX_PATH = os.getenv("DEDUPE_INDEX_PATH", "scraped_data/dedupe_index.jsonl")
 IMAGE_EXTENSIONS = _env_csv_list(
     "IMAGE_EXTENSIONS",
     [".png", ".jpg", ".jpeg", ".gif"],

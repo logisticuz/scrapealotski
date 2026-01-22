@@ -13,6 +13,8 @@ from config import (
     DOWNLOAD_BACKOFF_SECONDS,
     DOWNLOAD_RETRIES,
     DOWNLOAD_TIMEOUT_SECONDS,
+    MAX_ATTACHMENT_MB,
+    DEDUPE_INDEX_PATH,
     IMAGE_EXTENSIONS,
     LOG_PATH,
     LOG_TO_FILE,
@@ -88,6 +90,52 @@ def _log_json(event, payload):
         handle.write(f"{json.dumps(record, ensure_ascii=False)}\n")
 
 
+def _load_dedupe_index(path):
+    index = set()
+    if not os.path.exists(path):
+        return index
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                attachment_id = record.get("attachment_id")
+                if attachment_id is None:
+                    continue
+                try:
+                    index.add(int(attachment_id))
+                except (TypeError, ValueError):
+                    continue
+    except OSError as exc:
+        _log_error(f"⚠️ Failed to read dedupe index: {exc}")
+    return index
+
+
+def _append_dedupe_entry(path, attachment_id, filename):
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    record = {
+        "attachment_id": int(attachment_id),
+        "filename": filename,
+    }
+    try:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(f"{json.dumps(record, ensure_ascii=False)}\n")
+    except OSError as exc:
+        _log_error(f"⚠️ Failed to write dedupe index: {exc}")
+
+
+def _merge_stats(total, stats):
+    for key, value in stats.items():
+        total[key] = total.get(key, 0) + value
+
+
 def _prompt_int(label, default):
     value = input(f"{label} [{default}]: ").strip()
     if not value:
@@ -156,6 +204,24 @@ def _configure_runtime_settings():
     RUN_SCRAPE_METADATA_ONLY = _prompt_bool(
         "Metadata only (skip downloads)", RUN_SCRAPE_METADATA_ONLY
     )
+
+
+async def _validate_channel_access(channel_id):
+    channel = client.get_channel(channel_id)
+    if channel is None:
+        raise RuntimeError(f"Channel not found for ID {channel_id}.")
+    try:
+        async for _ in channel.history(limit=1):
+            break
+    except discord.Forbidden as exc:
+        raise RuntimeError(
+            "Missing permissions to read channel history. "
+            "Ensure View Channels + Read Message History."
+        ) from exc
+    except discord.HTTPException as exc:
+        raise RuntimeError(f"Failed to read channel history: {exc}") from exc
+    if not client.intents.message_content:
+        _log_error("⚠️ Message Content Intent is disabled; message content may be missing.")
 
 
 async def _upload_file_async(local_path, cloud_path):
@@ -286,7 +352,14 @@ async def download_attachment(session, url, filename):
     return False
 
 # Function to scrape messages and images from a given channel
-async def scrape_messages(channel_id, limit=None, after=None, before=None):
+async def scrape_messages(
+    channel_id,
+    limit=None,
+    after=None,
+    before=None,
+    dedupe_index=None,
+    max_bytes=0,
+):
     channel = client.get_channel(channel_id)
     if channel is None:
         raise RuntimeError(f"Channel not found for ID {channel_id}.")
@@ -296,6 +369,8 @@ async def scrape_messages(channel_id, limit=None, after=None, before=None):
     attachment_count = 0
     attachment_success = 0
     attachment_fail = 0
+    attachment_skipped_dedupe = 0
+    attachment_skipped_size = 0
     oldest_id = None
 
     timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT_SECONDS)
@@ -321,11 +396,28 @@ async def scrape_messages(channel_id, limit=None, after=None, before=None):
                         filename = f"scraped_videos/{attachment.id}_{attachment.filename}"
                     else:
                         continue
+                    if dedupe_index is not None and attachment.id in dedupe_index:
+                        attachment_skipped_dedupe += 1
+                        continue
+                    if max_bytes > 0 and attachment.size > max_bytes:
+                        size_mb = attachment.size / (1024 * 1024)
+                        _log(
+                            f"⏭️ Skipping large file ({size_mb:.1f} MB): {filename}"
+                        )
+                        attachment_skipped_size += 1
+                        continue
                     attachment_count += 1
                     success = await download_attachment(session, attachment.url, filename)
                     if success:
                         msg_data["attachments"].append(filename)
                         attachment_success += 1
+                        if (
+                            dedupe_index is not None
+                            and not RUN_SCRAPE_METADATA_ONLY
+                            and not RUN_SCRAPE_DRY_RUN
+                        ):
+                            dedupe_index.add(attachment.id)
+                            _append_dedupe_entry(DEDUPE_INDEX_PATH, attachment.id, filename)
                     else:
                         msg_data["errors"].append(
                             {
@@ -360,6 +452,8 @@ async def scrape_messages(channel_id, limit=None, after=None, before=None):
         "attachments": attachment_count,
         "attachments_ok": attachment_success,
         "attachments_failed": attachment_fail,
+        "attachments_skipped_dedupe": attachment_skipped_dedupe,
+        "attachments_skipped_size": attachment_skipped_size,
     }
     return stats, oldest_id
 
@@ -370,7 +464,21 @@ async def on_ready():
     if SCRAPE_CHANNEL_ID == 0:
         raise RuntimeError("SCRAPE_CHANNEL_ID is not set.")
     _ensure_state_path(SCRAPE_STATE_PATH)
+    await _validate_channel_access(SCRAPE_CHANNEL_ID)
     state = _load_state(SCRAPE_STATE_PATH)
+    dedupe_index = _load_dedupe_index(DEDUPE_INDEX_PATH)
+    max_bytes = MAX_ATTACHMENT_MB * 1024 * 1024 if MAX_ATTACHMENT_MB > 0 else 0
+    total_stats = {
+        "messages": 0,
+        "message_errors": 0,
+        "attachments": 0,
+        "attachments_ok": 0,
+        "attachments_failed": 0,
+        "attachments_skipped_dedupe": 0,
+        "attachments_skipped_size": 0,
+    }
+    if dedupe_index:
+        _log(f"ℹ️ Loaded dedupe index with {len(dedupe_index)} entries.")
     if RUN_SCRAPE_BACKFILL:
         batches = 0
         while True:
@@ -386,12 +494,16 @@ async def on_ready():
                 limit=limit,
                 after=None,
                 before=discord.Object(id=before_id) if before_id else None,
+                dedupe_index=dedupe_index,
+                max_bytes=max_bytes,
             )
             elapsed = time.monotonic() - started_at
             _log(
                 "✅ Batch done: "
                 f"messages={stats['messages']} attachments={stats['attachments']} "
                 f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
+                f"skipped_dedupe={stats['attachments_skipped_dedupe']} "
+                f"skipped_size={stats['attachments_skipped_size']} "
                 f"message_errors={stats['message_errors']} duration={elapsed:.1f}s"
             )
             _log_json(
@@ -404,9 +516,12 @@ async def on_ready():
                     "attachments": stats["attachments"],
                     "attachments_ok": stats["attachments_ok"],
                     "attachments_failed": stats["attachments_failed"],
+                    "attachments_skipped_dedupe": stats["attachments_skipped_dedupe"],
+                    "attachments_skipped_size": stats["attachments_skipped_size"],
                     "duration_seconds": round(elapsed, 2),
                 },
             )
+            _merge_stats(total_stats, stats)
             if stats["messages"] == 0:
                 _log("✅ Backfill complete, no older messages to scrape.")
                 _set_backfill_state(state, None, True)
@@ -442,12 +557,16 @@ async def on_ready():
             limit=limit,
             after=after,
             before=None,
+            dedupe_index=dedupe_index,
+            max_bytes=max_bytes,
         )
         elapsed = time.monotonic() - started_at
         _log(
             "✅ Run done: "
             f"messages={stats['messages']} attachments={stats['attachments']} "
             f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
+            f"skipped_dedupe={stats['attachments_skipped_dedupe']} "
+            f"skipped_size={stats['attachments_skipped_size']} "
             f"message_errors={stats['message_errors']} duration={elapsed:.1f}s"
         )
         _log_json(
@@ -459,11 +578,35 @@ async def on_ready():
                 "attachments": stats["attachments"],
                 "attachments_ok": stats["attachments_ok"],
                 "attachments_failed": stats["attachments_failed"],
+                "attachments_skipped_dedupe": stats["attachments_skipped_dedupe"],
+                "attachments_skipped_size": stats["attachments_skipped_size"],
                 "duration_seconds": round(elapsed, 2),
             },
         )
+        _merge_stats(total_stats, stats)
         _set_last_run(state, datetime.now(timezone.utc))
         _save_state(SCRAPE_STATE_PATH, state)
+    _log(
+        "🏁 Summary: "
+        f"messages={total_stats['messages']} attachments={total_stats['attachments']} "
+        f"ok={total_stats['attachments_ok']} failed={total_stats['attachments_failed']} "
+        f"skipped_dedupe={total_stats['attachments_skipped_dedupe']} "
+        f"skipped_size={total_stats['attachments_skipped_size']} "
+        f"message_errors={total_stats['message_errors']}"
+    )
+    _log_json(
+        "run_summary",
+        {
+            "mode": "backfill" if RUN_SCRAPE_BACKFILL else "latest",
+            "messages": total_stats["messages"],
+            "message_errors": total_stats["message_errors"],
+            "attachments": total_stats["attachments"],
+            "attachments_ok": total_stats["attachments_ok"],
+            "attachments_failed": total_stats["attachments_failed"],
+            "attachments_skipped_dedupe": total_stats["attachments_skipped_dedupe"],
+            "attachments_skipped_size": total_stats["attachments_skipped_size"],
+        },
+    )
     await client.close()
 
 # Start the Discord bot
