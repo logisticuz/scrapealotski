@@ -28,6 +28,7 @@ from config import (
     SCRAPE_BACKFILL_SLEEP_SECONDS,
     SCRAPE_BATCH_SIZE,
     SCRAPE_CHANNEL_ID,
+    SCRAPE_CHANNEL_IDS,
     SCRAPE_DRY_RUN,
     SCRAPE_LIMIT,
     SCRAPE_METADATA_ONLY,
@@ -69,6 +70,7 @@ RUN_SCRAPE_DRY_RUN = SCRAPE_DRY_RUN
 RUN_SCRAPE_METADATA_ONLY = SCRAPE_METADATA_ONLY
 RUN_SCRAPE_OUTPUT_DIR = SCRAPE_OUTPUT_DIR
 RUN_SCRAPE_MEDIA_DIR = SCRAPE_MEDIA_DIR
+RUN_SCRAPE_CHANNEL_IDS = SCRAPE_CHANNEL_IDS
 
 
 def _resolve_output_path(path, base_dir=None):
@@ -236,6 +238,7 @@ def _configure_runtime_settings():
     global RUN_SCRAPE_METADATA_ONLY
     global RUN_SCRAPE_OUTPUT_DIR
     global RUN_SCRAPE_MEDIA_DIR
+    global RUN_SCRAPE_CHANNEL_IDS
 
     if not sys.stdin.isatty():
         return
@@ -554,47 +557,116 @@ async def scrape_messages(
 # Event handler: Runs when the bot connects to Discord
 @client.event
 async def on_ready():
-    if SCRAPE_CHANNEL_ID == 0:
+    channels = RUN_SCRAPE_CHANNEL_IDS or ([SCRAPE_CHANNEL_ID] if SCRAPE_CHANNEL_ID else [])
+    if not channels:
         raise RuntimeError("SCRAPE_CHANNEL_ID is not set.")
-    _init_output_paths(SCRAPE_CHANNEL_ID)
     _log(f"Bot is online as {client.user}")
-    _ensure_state_path(STATE_PATH)
-    await _validate_channel_access(SCRAPE_CHANNEL_ID)
-    state = _load_state(STATE_PATH)
-    dedupe_index = _load_dedupe_index(DEDUPE_INDEX_PATH_RESOLVED)
     max_bytes = MAX_ATTACHMENT_MB * 1024 * 1024 if MAX_ATTACHMENT_MB > 0 else 0
-    total_stats = {
-        "messages": 0,
-        "message_errors": 0,
-        "attachments": 0,
-        "attachments_ok": 0,
-        "attachments_failed": 0,
-        "attachments_skipped_dedupe": 0,
-        "attachments_skipped_size": 0,
-    }
-    if dedupe_index:
-        _log(f"ℹ️ Loaded dedupe index with {len(dedupe_index)} entries.")
-    if RUN_SCRAPE_BACKFILL:
-        batches = 0
-        while True:
-            before_id, backfill_complete = _get_backfill_state(state)
-            if backfill_complete:
-                _log("✅ Backfill complete, no older messages to scrape.")
-                break
-            limit = RUN_SCRAPE_BATCH_SIZE if RUN_SCRAPE_BATCH_SIZE > 0 else 200
-            _log(f"▶️ Backfill batch {batches + 1} starting (limit={limit}).")
+    for index, channel_id in enumerate(channels, start=1):
+        _log(f"▶️ Processing channel {index}/{len(channels)}: {channel_id}")
+        _init_output_paths(channel_id)
+        _ensure_state_path(STATE_PATH)
+        await _validate_channel_access(channel_id)
+        state = _load_state(STATE_PATH)
+        dedupe_index = _load_dedupe_index(DEDUPE_INDEX_PATH_RESOLVED)
+        total_stats = {
+            "messages": 0,
+            "message_errors": 0,
+            "attachments": 0,
+            "attachments_ok": 0,
+            "attachments_failed": 0,
+            "attachments_skipped_dedupe": 0,
+            "attachments_skipped_size": 0,
+        }
+        if dedupe_index:
+            _log(f"ℹ️ Loaded dedupe index with {len(dedupe_index)} entries.")
+        if RUN_SCRAPE_BACKFILL:
+            batches = 0
+            while True:
+                before_id, backfill_complete = _get_backfill_state(state)
+                if backfill_complete:
+                    _log("✅ Backfill complete, no older messages to scrape.")
+                    break
+                limit = RUN_SCRAPE_BATCH_SIZE if RUN_SCRAPE_BATCH_SIZE > 0 else 200
+                _log(f"▶️ Backfill batch {batches + 1} starting (limit={limit}).")
+                started_at = time.monotonic()
+                stats, oldest_id = await scrape_messages(
+                    channel_id,
+                    limit=limit,
+                    after=None,
+                    before=discord.Object(id=before_id) if before_id else None,
+                    dedupe_index=dedupe_index,
+                    max_bytes=max_bytes,
+                )
+                elapsed = time.monotonic() - started_at
+                _log(
+                    "✅ Batch done: "
+                    f"messages={stats['messages']} attachments={stats['attachments']} "
+                    f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
+                    f"skipped_dedupe={stats['attachments_skipped_dedupe']} "
+                    f"skipped_size={stats['attachments_skipped_size']} "
+                    f"message_errors={stats['message_errors']} duration={elapsed:.1f}s "
+                    f"oldest={stats['oldest_timestamp']}"
+                )
+                _log_json(
+                    "batch_complete",
+                    {
+                        "mode": "backfill",
+                        "channel_id": channel_id,
+                        "batch": batches + 1,
+                        "messages": stats["messages"],
+                        "message_errors": stats["message_errors"],
+                        "attachments": stats["attachments"],
+                        "attachments_ok": stats["attachments_ok"],
+                        "attachments_failed": stats["attachments_failed"],
+                        "attachments_skipped_dedupe": stats["attachments_skipped_dedupe"],
+                        "attachments_skipped_size": stats["attachments_skipped_size"],
+                        "oldest_timestamp": stats["oldest_timestamp"],
+                        "duration_seconds": round(elapsed, 2),
+                    },
+                )
+                _merge_stats(total_stats, stats)
+                if stats["messages"] == 0:
+                    _log("✅ Backfill complete, no older messages to scrape.")
+                    _set_backfill_state(state, None, True)
+                    _save_state(STATE_PATH, state)
+                    break
+                _set_backfill_state(state, oldest_id, False)
+                _save_state(STATE_PATH, state)
+                _log(f"ℹ️ Backfill cursor saved: {oldest_id}")
+                batches += 1
+                if not RUN_SCRAPE_BACKFILL_AUTORUN:
+                    break
+                if RUN_SCRAPE_BACKFILL_MAX_BATCHES > 0 and batches >= RUN_SCRAPE_BACKFILL_MAX_BATCHES:
+                    _log("ℹ️ Backfill max batches reached, stopping.")
+                    break
+                _log(f"⏸️ Sleeping {RUN_SCRAPE_BACKFILL_SLEEP_SECONDS}s before next batch.")
+                await asyncio.sleep(RUN_SCRAPE_BACKFILL_SLEEP_SECONDS)
+        else:
+            limit = RUN_SCRAPE_LIMIT if RUN_SCRAPE_LIMIT > 0 else None
+            after_candidates = []
+            if RUN_SCRAPE_SINCE_DAYS > 0:
+                after_candidates.append(
+                    datetime.now(timezone.utc) - timedelta(days=RUN_SCRAPE_SINCE_DAYS)
+                )
+            if RUN_SCRAPE_USE_LAST_RUN:
+                last_run = _get_last_run(state)
+                if last_run is not None:
+                    after_candidates.append(last_run)
+            after = max(after_candidates) if after_candidates else None
+            _log("▶️ Scrape run starting.")
             started_at = time.monotonic()
-            stats, oldest_id = await scrape_messages(
-                SCRAPE_CHANNEL_ID,
+            stats, _ = await scrape_messages(
+                channel_id,
                 limit=limit,
-                after=None,
-                before=discord.Object(id=before_id) if before_id else None,
+                after=after,
+                before=None,
                 dedupe_index=dedupe_index,
                 max_bytes=max_bytes,
             )
             elapsed = time.monotonic() - started_at
             _log(
-                "✅ Batch done: "
+                "✅ Run done: "
                 f"messages={stats['messages']} attachments={stats['attachments']} "
                 f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
                 f"skipped_dedupe={stats['attachments_skipped_dedupe']} "
@@ -603,10 +675,10 @@ async def on_ready():
                 f"oldest={stats['oldest_timestamp']}"
             )
             _log_json(
-                "batch_complete",
+                "run_complete",
                 {
-                    "mode": "backfill",
-                    "batch": batches + 1,
+                    "mode": "latest",
+                    "channel_id": channel_id,
                     "messages": stats["messages"],
                     "message_errors": stats["message_errors"],
                     "attachments": stats["attachments"],
@@ -619,93 +691,30 @@ async def on_ready():
                 },
             )
             _merge_stats(total_stats, stats)
-            if stats["messages"] == 0:
-                _log("✅ Backfill complete, no older messages to scrape.")
-                _set_backfill_state(state, None, True)
-                _save_state(STATE_PATH, state)
-                break
-            _set_backfill_state(state, oldest_id, False)
+            _set_last_run(state, datetime.now(timezone.utc))
             _save_state(STATE_PATH, state)
-            _log(f"ℹ️ Backfill cursor saved: {oldest_id}")
-            batches += 1
-            if not RUN_SCRAPE_BACKFILL_AUTORUN:
-                break
-            if RUN_SCRAPE_BACKFILL_MAX_BATCHES > 0 and batches >= RUN_SCRAPE_BACKFILL_MAX_BATCHES:
-                _log("ℹ️ Backfill max batches reached, stopping.")
-                break
-            _log(f"⏸️ Sleeping {RUN_SCRAPE_BACKFILL_SLEEP_SECONDS}s before next batch.")
-            await asyncio.sleep(RUN_SCRAPE_BACKFILL_SLEEP_SECONDS)
-    else:
-        limit = RUN_SCRAPE_LIMIT if RUN_SCRAPE_LIMIT > 0 else None
-        after_candidates = []
-        if RUN_SCRAPE_SINCE_DAYS > 0:
-            after_candidates.append(
-                datetime.now(timezone.utc) - timedelta(days=RUN_SCRAPE_SINCE_DAYS)
-            )
-        if RUN_SCRAPE_USE_LAST_RUN:
-            last_run = _get_last_run(state)
-            if last_run is not None:
-                after_candidates.append(last_run)
-        after = max(after_candidates) if after_candidates else None
-        _log("▶️ Scrape run starting.")
-        started_at = time.monotonic()
-        stats, _ = await scrape_messages(
-            SCRAPE_CHANNEL_ID,
-            limit=limit,
-            after=after,
-            before=None,
-            dedupe_index=dedupe_index,
-            max_bytes=max_bytes,
-        )
-        elapsed = time.monotonic() - started_at
         _log(
-            "✅ Run done: "
-            f"messages={stats['messages']} attachments={stats['attachments']} "
-            f"ok={stats['attachments_ok']} failed={stats['attachments_failed']} "
-            f"skipped_dedupe={stats['attachments_skipped_dedupe']} "
-            f"skipped_size={stats['attachments_skipped_size']} "
-            f"message_errors={stats['message_errors']} duration={elapsed:.1f}s "
-            f"oldest={stats['oldest_timestamp']}"
+            "🏁 Summary: "
+            f"messages={total_stats['messages']} attachments={total_stats['attachments']} "
+            f"ok={total_stats['attachments_ok']} failed={total_stats['attachments_failed']} "
+            f"skipped_dedupe={total_stats['attachments_skipped_dedupe']} "
+            f"skipped_size={total_stats['attachments_skipped_size']} "
+            f"message_errors={total_stats['message_errors']}"
         )
         _log_json(
-            "run_complete",
+            "run_summary",
             {
-                "mode": "latest",
-                "messages": stats["messages"],
-                "message_errors": stats["message_errors"],
-                "attachments": stats["attachments"],
-                "attachments_ok": stats["attachments_ok"],
-                "attachments_failed": stats["attachments_failed"],
-                "attachments_skipped_dedupe": stats["attachments_skipped_dedupe"],
-                "attachments_skipped_size": stats["attachments_skipped_size"],
-                "oldest_timestamp": stats["oldest_timestamp"],
-                "duration_seconds": round(elapsed, 2),
+                "mode": "backfill" if RUN_SCRAPE_BACKFILL else "latest",
+                "channel_id": channel_id,
+                "messages": total_stats["messages"],
+                "message_errors": total_stats["message_errors"],
+                "attachments": total_stats["attachments"],
+                "attachments_ok": total_stats["attachments_ok"],
+                "attachments_failed": total_stats["attachments_failed"],
+                "attachments_skipped_dedupe": total_stats["attachments_skipped_dedupe"],
+                "attachments_skipped_size": total_stats["attachments_skipped_size"],
             },
         )
-        _merge_stats(total_stats, stats)
-        _set_last_run(state, datetime.now(timezone.utc))
-        _save_state(STATE_PATH, state)
-    _log(
-        "🏁 Summary: "
-        f"messages={total_stats['messages']} attachments={total_stats['attachments']} "
-        f"ok={total_stats['attachments_ok']} failed={total_stats['attachments_failed']} "
-        f"skipped_dedupe={total_stats['attachments_skipped_dedupe']} "
-        f"skipped_size={total_stats['attachments_skipped_size']} "
-        f"message_errors={total_stats['message_errors']}"
-    )
-    _log_json(
-        "run_summary",
-        {
-            "mode": "backfill" if RUN_SCRAPE_BACKFILL else "latest",
-            "messages": total_stats["messages"],
-            "message_errors": total_stats["message_errors"],
-            "attachments": total_stats["attachments"],
-            "attachments_ok": total_stats["attachments_ok"],
-            "attachments_failed": total_stats["attachments_failed"],
-            "attachments_skipped_dedupe": total_stats["attachments_skipped_dedupe"],
-            "attachments_skipped_size": total_stats["attachments_skipped_size"],
-        },
-    )
     await client.close()
 
 # Start the Discord bot

@@ -17,6 +17,7 @@ and store them in a clean, searchable archive.
 ## Quick start (local archive)
 1) Copy `.env.example` to `.env`.
 2) Set `DISCORD_BOT_TOKEN` and `SCRAPE_CHANNEL_ID`.
+   - Optional: set `SCRAPE_CHANNEL_IDS` (comma-separated) to process multiple channels.
 3) Install deps: `pip install -r requirements.txt`.
 4) Run `python discord_scraper.py`.
 
@@ -41,6 +42,7 @@ When you run in a terminal, you get a simple menu to pick "latest" vs "backfill"
 - `SCRAPE_STATE_PATH`: Where the last-run timestamp is stored.
 - `SCRAPE_OUTPUT_DIR`: Base output folder (images, videos, data, logs).
 - `SCRAPE_MEDIA_DIR`: Optional folder for images/videos only.
+- `SCRAPE_CHANNEL_IDS`: Comma-separated list of channel IDs to process.
 
 State file per channel: if `SCRAPE_STATE_PATH` is left as `scrape_state.json`, the scraper will automatically create `scrape_state_<channel_id>.json` so channels do not share state. You can also set `SCRAPE_STATE_PATH` to include `{channel_id}`.
 - `UPLOAD_BASE_PATH`: Cloud base path (only used if uploads enabled).

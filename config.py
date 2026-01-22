@@ -46,6 +46,18 @@ def _env_csv_list(name, default):
     return values or default
 
 
+def _env_int_csv(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    values = []
+    for item in raw.split(","):
+        item = item.strip()
+        if item.isdigit():
+            values.append(int(item))
+    return values or default
+
+
 # Cloud storage settings
 ENABLE_UPLOADS = _env_bool("ENABLE_UPLOADS", False)
 USE_DROPBOX = _env_bool("USE_DROPBOX", False)  # Set to True to use Dropbox uploads
@@ -60,6 +72,7 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 
 # Scraper settings
 SCRAPE_CHANNEL_ID = _env_int("SCRAPE_CHANNEL_ID", 0)
+SCRAPE_CHANNEL_IDS = _env_int_csv("SCRAPE_CHANNEL_IDS", [])
 SCRAPE_LIMIT = _env_int("SCRAPE_LIMIT", 0)
 SCRAPE_SINCE_DAYS = _env_int("SCRAPE_SINCE_DAYS", 0)
 SCRAPE_USE_LAST_RUN = _env_bool("SCRAPE_USE_LAST_RUN", True)
