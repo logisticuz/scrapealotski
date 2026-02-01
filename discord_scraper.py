@@ -650,6 +650,8 @@ async def on_ready():
         raise RuntimeError("No channels configured. Set SCRAPE_CHANNEL_ID, SCRAPE_CHANNEL_IDS, or SCRAPE_CATEGORY_IDS.")
     _log(f"Bot is online as {client.user}")
     max_bytes = MAX_ATTACHMENT_MB * 1024 * 1024 if MAX_ATTACHMENT_MB > 0 else 0
+    run_stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    channel_reports = []
     for index, channel_id in enumerate(channels, start=1):
         _log(f"▶️ Processing channel {index}/{len(channels)}: {channel_id}")
         _init_output_paths(channel_id)
@@ -666,6 +668,7 @@ async def on_ready():
             "attachments_skipped_dedupe": 0,
             "attachments_skipped_size": 0,
         }
+        channel_oldest = None
         if dedupe_index:
             _log(f"ℹ️ Loaded dedupe index with {len(dedupe_index)} entries.")
         if RUN_SCRAPE_BACKFILL:
@@ -713,6 +716,8 @@ async def on_ready():
                         "duration_seconds": round(elapsed, 2),
                     },
                 )
+                if stats["oldest_timestamp"]:
+                    channel_oldest = stats["oldest_timestamp"]
                 _merge_stats(total_stats, stats)
                 if stats["messages"] == 0:
                     _log("✅ Backfill complete, no older messages to scrape.")
@@ -778,6 +783,8 @@ async def on_ready():
                     "duration_seconds": round(elapsed, 2),
                 },
             )
+            if stats["oldest_timestamp"]:
+                channel_oldest = stats["oldest_timestamp"]
             _merge_stats(total_stats, stats)
             _set_last_run(state, datetime.now(timezone.utc))
             _save_state(STATE_PATH, state)
@@ -803,6 +810,32 @@ async def on_ready():
                 "attachments_skipped_size": total_stats["attachments_skipped_size"],
             },
         )
+        channel_reports.append(
+            {
+                "channel_id": channel_id,
+                "mode": "backfill" if RUN_SCRAPE_BACKFILL else "latest",
+                "messages": total_stats["messages"],
+                "message_errors": total_stats["message_errors"],
+                "attachments": total_stats["attachments"],
+                "attachments_ok": total_stats["attachments_ok"],
+                "attachments_failed": total_stats["attachments_failed"],
+                "attachments_skipped_dedupe": total_stats["attachments_skipped_dedupe"],
+                "attachments_skipped_size": total_stats["attachments_skipped_size"],
+                "oldest_timestamp": channel_oldest,
+            }
+        )
+    report_path = os.path.join(SCRAPED_DATA_DIR, f"report_{run_stamp}.json")
+    with open(report_path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "run_timestamp": datetime.now().astimezone().isoformat(),
+                "channel_reports": channel_reports,
+            },
+            handle,
+            ensure_ascii=False,
+            indent=4,
+        )
+    _log(f"🧾 Report saved: {report_path}")
     await client.close()
 
 # Start the Discord bot
