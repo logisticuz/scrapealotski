@@ -195,6 +195,8 @@ def _append_dedupe_entry(path, attachment_id, filename):
 
 def _merge_stats(total, stats):
     for key, value in stats.items():
+        if not isinstance(value, (int, float)):
+            continue
         total[key] = total.get(key, 0) + value
 
 
@@ -277,9 +279,10 @@ def _configure_runtime_settings():
     RUN_SCRAPE_METADATA_ONLY = _prompt_bool(
         "Metadata only (skip downloads)", RUN_SCRAPE_METADATA_ONLY
     )
-    RUN_SCRAPE_OUTPUT_DIR = _prompt_path(
-        "Output folder", RUN_SCRAPE_OUTPUT_DIR
-    )
+    if RUN_SCRAPE_OUTPUT_DIR:
+        RUN_SCRAPE_OUTPUT_DIR = _prompt_path(
+            "Output folder", RUN_SCRAPE_OUTPUT_DIR
+        )
     RUN_SCRAPE_MEDIA_DIR = _prompt_path(
         "Media folder (images/videos)", RUN_SCRAPE_MEDIA_DIR
     )
