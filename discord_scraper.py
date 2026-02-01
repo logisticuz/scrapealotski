@@ -30,6 +30,7 @@ from config import (
     SCRAPE_BATCH_SIZE,
     SCRAPE_CHANNEL_ID,
     SCRAPE_CHANNEL_IDS,
+    SCRAPE_CATEGORY_IDS,
     SCRAPE_DRY_RUN,
     SCRAPE_LIMIT,
     SCRAPE_METADATA_ONLY,
@@ -75,6 +76,7 @@ RUN_SCRAPE_COUNT_ONLY = SCRAPE_COUNT_ONLY
 RUN_SCRAPE_OUTPUT_DIR = SCRAPE_OUTPUT_DIR
 RUN_SCRAPE_MEDIA_DIR = SCRAPE_MEDIA_DIR
 RUN_SCRAPE_CHANNEL_IDS = SCRAPE_CHANNEL_IDS
+RUN_SCRAPE_CATEGORY_IDS = SCRAPE_CATEGORY_IDS
 
 
 def _resolve_output_path(path, base_dir=None):
@@ -216,6 +218,36 @@ def _merge_stats(total, stats):
         total[key] = total.get(key, 0) + value
 
 
+def _resolve_channels():
+    channels = []
+    seen = set()
+    direct = RUN_SCRAPE_CHANNEL_IDS or ([SCRAPE_CHANNEL_ID] if SCRAPE_CHANNEL_ID else [])
+    for channel_id in direct:
+        if channel_id in seen:
+            continue
+        seen.add(channel_id)
+        channels.append(channel_id)
+
+    for category_id in RUN_SCRAPE_CATEGORY_IDS:
+        category = client.get_channel(category_id)
+        if category is None:
+            _log_error(f"⚠️ Category not found for ID {category_id}.")
+            continue
+        category_channels = getattr(category, "channels", None)
+        if category_channels is None:
+            _log_error(f"⚠️ Channel {category_id} is not a category.")
+            continue
+        for channel in category_channels:
+            channel_id = getattr(channel, "id", None)
+            if channel_id is None or channel_id in seen:
+                continue
+            if not hasattr(channel, "history"):
+                continue
+            seen.add(channel_id)
+            channels.append(channel_id)
+    return channels
+
+
 def _prompt_int(label, default):
     value = input(f"{label} [{default}]: ").strip()
     if not value:
@@ -271,6 +303,7 @@ def _configure_runtime_settings():
     global RUN_SCRAPE_OUTPUT_DIR
     global RUN_SCRAPE_MEDIA_DIR
     global RUN_SCRAPE_CHANNEL_IDS
+    global RUN_SCRAPE_CATEGORY_IDS
 
     if not sys.stdin.isatty():
         return
@@ -307,6 +340,9 @@ def _configure_runtime_settings():
         )
     RUN_SCRAPE_CHANNEL_IDS = _prompt_int_csv(
         "Channel IDs (comma-separated)", RUN_SCRAPE_CHANNEL_IDS
+    )
+    RUN_SCRAPE_CATEGORY_IDS = _prompt_int_csv(
+        "Category IDs (comma-separated)", RUN_SCRAPE_CATEGORY_IDS
     )
     if RUN_SCRAPE_DRY_RUN:
         RUN_SCRAPE_DRY_RUN = _prompt_bool("Dry run (no downloads)", RUN_SCRAPE_DRY_RUN)
@@ -609,9 +645,9 @@ async def scrape_messages(
 # Event handler: Runs when the bot connects to Discord
 @client.event
 async def on_ready():
-    channels = RUN_SCRAPE_CHANNEL_IDS or ([SCRAPE_CHANNEL_ID] if SCRAPE_CHANNEL_ID else [])
+    channels = _resolve_channels()
     if not channels:
-        raise RuntimeError("SCRAPE_CHANNEL_ID is not set.")
+        raise RuntimeError("No channels configured. Set SCRAPE_CHANNEL_ID, SCRAPE_CHANNEL_IDS, or SCRAPE_CATEGORY_IDS.")
     _log(f"Bot is online as {client.user}")
     max_bytes = MAX_ATTACHMENT_MB * 1024 * 1024 if MAX_ATTACHMENT_MB > 0 else 0
     for index, channel_id in enumerate(channels, start=1):
