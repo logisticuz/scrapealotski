@@ -73,3 +73,5 @@ State file per channel: if `SCRAPE_STATE_PATH` is left as `scrape_state.json`, t
 Backfill tip: set `SCRAPE_BACKFILL=true` and rerun the script multiple times to walk backwards in history. Delete `SCRAPE_STATE_PATH` to start over.
 
 Metadata output: each run writes a timestamped JSON file under `scraped_data/` to avoid overwriting previous batches.
+
+Report output: each run writes `scraped_data/report_<timestamp>.json` with per-channel totals.
