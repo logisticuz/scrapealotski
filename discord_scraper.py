@@ -211,6 +211,19 @@ def _prompt_int(label, default):
         return default
 
 
+def _prompt_int_csv(label, default):
+    display_default = ",".join(str(value) for value in default) if default else ""
+    value = input(f"{label} [{display_default}]: ").strip()
+    if not value:
+        return default
+    values = []
+    for item in value.split(","):
+        item = item.strip()
+        if item.isdigit():
+            values.append(int(item))
+    return values or default
+
+
 def _prompt_bool(label, default):
     default_label = "Y/n" if default else "y/N"
     value = input(f"{label} ({default_label}): ").strip().lower()
@@ -275,10 +288,15 @@ def _configure_runtime_settings():
         RUN_SCRAPE_USE_LAST_RUN = _prompt_bool(
             "Use last-run cursor", RUN_SCRAPE_USE_LAST_RUN
         )
-    RUN_SCRAPE_DRY_RUN = _prompt_bool("Dry run (no downloads)", RUN_SCRAPE_DRY_RUN)
-    RUN_SCRAPE_METADATA_ONLY = _prompt_bool(
-        "Metadata only (skip downloads)", RUN_SCRAPE_METADATA_ONLY
+    RUN_SCRAPE_CHANNEL_IDS = _prompt_int_csv(
+        "Channel IDs (comma-separated)", RUN_SCRAPE_CHANNEL_IDS
     )
+    if RUN_SCRAPE_DRY_RUN:
+        RUN_SCRAPE_DRY_RUN = _prompt_bool("Dry run (no downloads)", RUN_SCRAPE_DRY_RUN)
+    if RUN_SCRAPE_METADATA_ONLY:
+        RUN_SCRAPE_METADATA_ONLY = _prompt_bool(
+            "Metadata only (skip downloads)", RUN_SCRAPE_METADATA_ONLY
+        )
     if RUN_SCRAPE_OUTPUT_DIR:
         RUN_SCRAPE_OUTPUT_DIR = _prompt_path(
             "Output folder", RUN_SCRAPE_OUTPUT_DIR
