@@ -86,6 +86,7 @@ SCRAPE_BACKFILL_SLEEP_SECONDS = _env_int("SCRAPE_BACKFILL_SLEEP_SECONDS", 10)
 SCRAPE_BACKFILL_MAX_BATCHES = _env_int("SCRAPE_BACKFILL_MAX_BATCHES", 0)
 SCRAPE_DRY_RUN = _env_bool("SCRAPE_DRY_RUN", False)
 SCRAPE_METADATA_ONLY = _env_bool("SCRAPE_METADATA_ONLY", False)
+SCRAPE_COUNT_ONLY = _env_bool("SCRAPE_COUNT_ONLY", False)
 LOG_TO_FILE = _env_bool("LOG_TO_FILE", False)
 LOG_PATH = os.getenv("LOG_PATH", "scrape.log")
 LOG_ERRORS_TO_FILE = _env_bool("LOG_ERRORS_TO_FILE", False)
@@ -104,4 +105,22 @@ IMAGE_EXTENSIONS = _env_csv_list(
 VIDEO_EXTENSIONS = _env_csv_list(
     "VIDEO_EXTENSIONS",
     [".mp4", ".mov", ".webm", ".mkv", ".avi"],
+)
+DOCUMENT_EXTENSIONS = _env_csv_list(
+    "DOCUMENT_EXTENSIONS",
+    [
+        ".txt",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".csv",
+        ".ppt",
+        ".pptx",
+        ".rtf",
+        ".odt",
+        ".ods",
+        ".odp",
+    ],
 )

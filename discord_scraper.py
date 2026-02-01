@@ -22,6 +22,7 @@ from config import (
     LOG_ERROR_PATH,
     LOG_JSON,
     LOG_JSON_PATH,
+    DOCUMENT_EXTENSIONS,
     SCRAPE_BACKFILL,
     SCRAPE_BACKFILL_AUTORUN,
     SCRAPE_BACKFILL_MAX_BATCHES,
@@ -32,6 +33,7 @@ from config import (
     SCRAPE_DRY_RUN,
     SCRAPE_LIMIT,
     SCRAPE_METADATA_ONLY,
+    SCRAPE_COUNT_ONLY,
     SCRAPE_OUTPUT_DIR,
     SCRAPE_MEDIA_DIR,
     SCRAPE_SINCE_DAYS,
@@ -45,6 +47,7 @@ from config import (
 
 SCRAPED_IMAGES_DIR = ""
 SCRAPED_VIDEOS_DIR = ""
+SCRAPED_DOCS_DIR = ""
 SCRAPED_DATA_DIR = ""
 STATE_PATH = ""
 LOG_PATH_RESOLVED = ""
@@ -68,6 +71,7 @@ RUN_SCRAPE_SINCE_DAYS = SCRAPE_SINCE_DAYS
 RUN_SCRAPE_USE_LAST_RUN = SCRAPE_USE_LAST_RUN
 RUN_SCRAPE_DRY_RUN = SCRAPE_DRY_RUN
 RUN_SCRAPE_METADATA_ONLY = SCRAPE_METADATA_ONLY
+RUN_SCRAPE_COUNT_ONLY = SCRAPE_COUNT_ONLY
 RUN_SCRAPE_OUTPUT_DIR = SCRAPE_OUTPUT_DIR
 RUN_SCRAPE_MEDIA_DIR = SCRAPE_MEDIA_DIR
 RUN_SCRAPE_CHANNEL_IDS = SCRAPE_CHANNEL_IDS
@@ -96,6 +100,7 @@ def _resolve_state_path(channel_id):
 def _init_output_paths(channel_id):
     global SCRAPED_IMAGES_DIR
     global SCRAPED_VIDEOS_DIR
+    global SCRAPED_DOCS_DIR
     global SCRAPED_DATA_DIR
     global STATE_PATH
     global LOG_PATH_RESOLVED
@@ -112,6 +117,10 @@ def _init_output_paths(channel_id):
         os.path.join("scraped_videos", str(channel_id)),
         media_base,
     )
+    SCRAPED_DOCS_DIR = _resolve_output_path(
+        os.path.join("scraped_documents", str(channel_id)),
+        media_base,
+    )
     SCRAPED_DATA_DIR = _resolve_output_path("scraped_data")
     STATE_PATH = _resolve_state_path(channel_id)
     LOG_PATH_RESOLVED = _resolve_output_path(LOG_PATH)
@@ -121,6 +130,7 @@ def _init_output_paths(channel_id):
 
     os.makedirs(SCRAPED_IMAGES_DIR, exist_ok=True)
     os.makedirs(SCRAPED_VIDEOS_DIR, exist_ok=True)
+    os.makedirs(SCRAPED_DOCS_DIR, exist_ok=True)
     os.makedirs(SCRAPED_DATA_DIR, exist_ok=True)
 
 
@@ -257,6 +267,7 @@ def _configure_runtime_settings():
     global RUN_SCRAPE_USE_LAST_RUN
     global RUN_SCRAPE_DRY_RUN
     global RUN_SCRAPE_METADATA_ONLY
+    global RUN_SCRAPE_COUNT_ONLY
     global RUN_SCRAPE_OUTPUT_DIR
     global RUN_SCRAPE_MEDIA_DIR
     global RUN_SCRAPE_CHANNEL_IDS
@@ -302,6 +313,10 @@ def _configure_runtime_settings():
     if RUN_SCRAPE_METADATA_ONLY:
         RUN_SCRAPE_METADATA_ONLY = _prompt_bool(
             "Metadata only (skip downloads)", RUN_SCRAPE_METADATA_ONLY
+        )
+    if RUN_SCRAPE_COUNT_ONLY:
+        RUN_SCRAPE_COUNT_ONLY = _prompt_bool(
+            "Count only (no downloads, no metadata)", RUN_SCRAPE_COUNT_ONLY
         )
     if RUN_SCRAPE_OUTPUT_DIR:
         RUN_SCRAPE_OUTPUT_DIR = _prompt_path(
@@ -420,6 +435,8 @@ def _ensure_state_path(path):
 
 # Function to download and save attachments (images, files, etc.)
 async def download_attachment(session, url, filename):
+    if RUN_SCRAPE_COUNT_ONLY:
+        return True
     if RUN_SCRAPE_METADATA_ONLY:
         _log(f"🗒️ Metadata only, skipping download: {filename}")
         return True
@@ -498,6 +515,7 @@ async def scrape_messages(
                     attachment_name = attachment.filename.lower()
                     is_image = any(attachment_name.endswith(ext) for ext in IMAGE_EXTENSIONS)
                     is_video = any(attachment_name.endswith(ext) for ext in VIDEO_EXTENSIONS)
+                    is_doc = any(attachment_name.endswith(ext) for ext in DOCUMENT_EXTENSIONS)
                     if is_image:
                         filename = os.path.join(
                             SCRAPED_IMAGES_DIR,
@@ -506,6 +524,11 @@ async def scrape_messages(
                     elif is_video:
                         filename = os.path.join(
                             SCRAPED_VIDEOS_DIR,
+                            f"{attachment.id}_{attachment.filename}",
+                        )
+                    elif is_doc:
+                        filename = os.path.join(
+                            SCRAPED_DOCS_DIR,
                             f"{attachment.id}_{attachment.filename}",
                         )
                     else:
@@ -529,6 +552,7 @@ async def scrape_messages(
                             dedupe_index is not None
                             and not RUN_SCRAPE_METADATA_ONLY
                             and not RUN_SCRAPE_DRY_RUN
+                            and not RUN_SCRAPE_COUNT_ONLY
                         ):
                             dedupe_index.add(attachment.id)
                             _append_dedupe_entry(
@@ -554,21 +578,22 @@ async def scrape_messages(
                 message_error_count += 1
                 continue
     
-    # Save messages to a JSON file
-    run_stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    output_file = os.path.join(
-        SCRAPED_DATA_DIR,
-        f"{channel_id}_{run_stamp}.json",
-    )
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(messages, f, ensure_ascii=False, indent=4)
+    if not RUN_SCRAPE_COUNT_ONLY:
+        # Save messages to a JSON file
+        run_stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(
+            SCRAPED_DATA_DIR,
+            f"{channel_id}_{run_stamp}.json",
+        )
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(messages, f, ensure_ascii=False, indent=4)
 
-    _log(f"✅ Saved {len(messages)} messages from channel {channel_id}!")
-    cloud_relative = f"scraped_data/{os.path.basename(output_file)}"
-    await _upload_file_async(
-        output_file,
-        f"{UPLOAD_BASE_PATH}/{cloud_relative}",
-    )  # Upload JSON file to cloud storage
+        _log(f"✅ Saved {len(messages)} messages from channel {channel_id}!")
+        cloud_relative = f"scraped_data/{os.path.basename(output_file)}"
+        await _upload_file_async(
+            output_file,
+            f"{UPLOAD_BASE_PATH}/{cloud_relative}",
+        )  # Upload JSON file to cloud storage
     stats = {
         "messages": message_count,
         "message_errors": message_error_count,

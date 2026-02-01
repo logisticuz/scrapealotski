@@ -54,6 +54,7 @@ State file per channel: if `SCRAPE_STATE_PATH` is left as `scrape_state.json`, t
 - `SCRAPE_BACKFILL_MAX_BATCHES`: Cap batches per run (0 = unlimited).
 - `SCRAPE_DRY_RUN`: Log what would be downloaded without saving files.
 - `SCRAPE_METADATA_ONLY`: Save metadata JSON but skip file downloads.
+- `SCRAPE_COUNT_ONLY`: Count media without downloads or metadata.
 - `LOG_TO_FILE`: Append logs to `LOG_PATH`.
 - `LOG_PATH`: Log file location when `LOG_TO_FILE=true`.
 - `LOG_ERRORS_TO_FILE`: Append error logs to `LOG_ERROR_PATH`.
@@ -65,7 +66,7 @@ State file per channel: if `SCRAPE_STATE_PATH` is left as `scrape_state.json`, t
 - `DOWNLOAD_TIMEOUT_SECONDS`: Per-download timeout (seconds).
 - `MAX_ATTACHMENT_MB`: Skip attachments larger than this (0 = no limit).
 - `DEDUPE_INDEX_PATH`: JSONL index file used to avoid duplicate downloads.
-- `IMAGE_EXTENSIONS` / `VIDEO_EXTENSIONS`: Comma-separated file extensions.
+- `IMAGE_EXTENSIONS` / `VIDEO_EXTENSIONS` / `DOCUMENT_EXTENSIONS`: Comma-separated file extensions.
 
 Backfill tip: set `SCRAPE_BACKFILL=true` and rerun the script multiple times to walk backwards in history. Delete `SCRAPE_STATE_PATH` to start over.
 
