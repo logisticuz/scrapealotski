@@ -104,8 +104,14 @@ def _init_output_paths(channel_id):
     global DEDUPE_INDEX_PATH_RESOLVED
 
     media_base = RUN_SCRAPE_MEDIA_DIR or RUN_SCRAPE_OUTPUT_DIR
-    SCRAPED_IMAGES_DIR = _resolve_output_path("scraped_images", media_base)
-    SCRAPED_VIDEOS_DIR = _resolve_output_path("scraped_videos", media_base)
+    SCRAPED_IMAGES_DIR = _resolve_output_path(
+        os.path.join("scraped_images", str(channel_id)),
+        media_base,
+    )
+    SCRAPED_VIDEOS_DIR = _resolve_output_path(
+        os.path.join("scraped_videos", str(channel_id)),
+        media_base,
+    )
     SCRAPED_DATA_DIR = _resolve_output_path("scraped_data")
     STATE_PATH = _resolve_state_path(channel_id)
     LOG_PATH_RESOLVED = _resolve_output_path(LOG_PATH)
